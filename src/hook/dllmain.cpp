@@ -10,6 +10,7 @@
 
 #include <string>
 
+#include "childinject.h"
 #include "cursor.h"
 #include "d3d9_layer.h"
 #include "display.h"
@@ -139,6 +140,7 @@ bool Startup() {
     framepace::Init();
 
     hooks::Api(L"kernel32.dll", "SetProcessAffinityMask", H_SetProcessAffinityMask, &real_SetProcessAffinityMask);
+    childinject::InstallHooks();
     display::InstallHooks();
     window::InstallHooks();
     cursor::InstallHooks();
