@@ -1,0 +1,17 @@
+# Build output
+/build/
+/_build_core.cmd
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.user
+
+# Local research dumps (large decompiler output kept out of the public repo)
+/research/out/
+/research/notes/*.local.md
+
+# Editor
+.vs/
+.vscode/
+*.swp
