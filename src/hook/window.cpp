@@ -1,5 +1,6 @@
 #include "window.h"
 
+#include <windowsx.h>
 #include <intrin.h>
 
 #include <algorithm>
@@ -18,6 +19,8 @@ HWND g_game = nullptr;
 RECT g_viewport{};      // where the virtual image lands inside the real client area
 SIZE g_virtual{};
 CRITICAL_SECTION g_lock;
+
+WNDPROC g_origProc = nullptr;
 
 namespace real {
 HWND(WINAPI* CreateWindowExW)(DWORD, LPCWSTR, LPCWSTR, DWORD, int, int, int, int, HWND, HMENU, HINSTANCE, LPVOID);
@@ -66,6 +69,38 @@ void RecomputeViewport() {
     LeaveCriticalSection(&g_lock);
 }
 
+// Mouse messages whose lParam carries client-relative x,y we must scale real->virtual so the
+// game (which believes its client is the virtual size) hit-tests where the player actually clicked.
+bool IsClientMouseMsg(UINT m) {
+    switch (m) {
+        case WM_MOUSEMOVE:
+        case WM_LBUTTONDOWN:
+        case WM_LBUTTONUP:
+        case WM_LBUTTONDBLCLK:
+        case WM_RBUTTONDOWN:
+        case WM_RBUTTONUP:
+        case WM_RBUTTONDBLCLK:
+        case WM_MBUTTONDOWN:
+        case WM_MBUTTONUP:
+        case WM_MBUTTONDBLCLK:
+        case WM_XBUTTONDOWN:
+        case WM_XBUTTONUP:
+        case WM_XBUTTONDBLCLK:
+            return true;
+        default:
+            return false;
+    }
+}
+
+LRESULT CALLBACK SubclassProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (hwnd == g_game && IsClientMouseMsg(msg)) {
+        POINT p{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        RealToVirtual(p);
+        lp = MAKELPARAM(static_cast<short>(p.x), static_cast<short>(p.y));
+    }
+    return CallWindowProcW(g_origProc, hwnd, msg, wp, lp);
+}
+
 DWORD StyleFor(DWORD requested) {
     if (g_profile.mode == DisplayMode::Borderless) return WS_POPUP | WS_VISIBLE | (requested & WS_MINIMIZEBOX);
     // Windowed: a normal resizable frame.
@@ -104,6 +139,9 @@ void AdoptWindow(HWND hwnd) {
     PlacedRect(style, x, y, w, h);
     real::SetWindowPos(hwnd, HWND_TOP, x, y, w, h, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
     RecomputeViewport();
+    // Subclass the window so mouse-message coordinates are scaled into the game's virtual space.
+    g_origProc = reinterpret_cast<WNDPROC>(
+        SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(SubclassProc)));
     LOGI("window: adopted %p -> real (%d,%d) %dx%d, virtual client %ldx%ld", hwnd, x, y, w, h, g_virtual.cx,
          g_virtual.cy);
 }

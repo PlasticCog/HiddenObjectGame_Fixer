@@ -47,6 +47,17 @@ std::wstring EnvVar(const wchar_t* name) {
     return (n > 0 && n < std::size(buf)) ? std::wstring(buf, n) : std::wstring();
 }
 
+// Keep the game from pinning itself to one core after startup.
+BOOL(WINAPI* real_SetProcessAffinityMask)(HANDLE, DWORD_PTR) = nullptr;
+BOOL WINAPI H_SetProcessAffinityMask(HANDLE proc, DWORD_PTR mask) {
+    DWORD_PTR procMask = 0, sysMask = 0;
+    if (GetProcessAffinityMask(GetCurrentProcess(), &procMask, &sysMask)) {
+        LOGV("hogfix: ignored SetProcessAffinityMask(0x%Ix), keeping 0x%Ix", mask, sysMask);
+        return real_SetProcessAffinityMask(proc, sysMask);
+    }
+    return real_SetProcessAffinityMask(proc, mask);
+}
+
 void ApplyDpiAwareness(DpiMode mode) {
     // Choose awareness before any window exists so the game's pixels are real pixels (we handle
     // all scaling ourselves). PerMonitorV2 is best on Win10; fall back gracefully.
@@ -109,12 +120,25 @@ bool Startup() {
     ComputeMainModuleRange();
     ApplyDpiAwareness(g_profile.dpi);
 
+    // Several of these games (and the bundle launcher that normally starts them) pin the process
+    // to a single CPU with SetProcessAffinityMask(1). On a modern many-core machine that starves
+    // the render/update threads and is a direct cause of low FPS and a laggy cursor. Give the
+    // process every core back.
+    {
+        DWORD_PTR procMask = 0, sysMask = 0;
+        if (GetProcessAffinityMask(GetCurrentProcess(), &procMask, &sysMask) && procMask != sysMask) {
+            SetProcessAffinityMask(GetCurrentProcess(), sysMask);
+            LOGI("hogfix: restored CPU affinity 0x%Ix -> 0x%Ix", procMask, sysMask);
+        }
+    }
+
     if (!hooks::Init()) return false;
     display::Init();
     window::Init();
     cursor::Init();
     framepace::Init();
 
+    hooks::Api(L"kernel32.dll", "SetProcessAffinityMask", H_SetProcessAffinityMask, &real_SetProcessAffinityMask);
     display::InstallHooks();
     window::InstallHooks();
     cursor::InstallHooks();
