@@ -18,7 +18,7 @@ add_library(imgui STATIC
 target_include_directories(imgui PUBLIC ${IMGUI_DIR} ${IMGUI_DIR}/backends)
 target_link_libraries(imgui PUBLIC SDL3::SDL3-static)
 
-add_executable(hoglauncher WIN32 main.cpp library.cpp)
+add_executable(hoglauncher WIN32 main.cpp library.cpp app.rc)
 set_target_properties(hoglauncher PROPERTIES OUTPUT_NAME "HOGFixer")
 target_link_libraries(hoglauncher PRIVATE hogcommon imgui SDL3::SDL3-static comdlg32 shell32 ole32 uuid)
 # WIN32 subsystem but we use main(); let MSVC find it.

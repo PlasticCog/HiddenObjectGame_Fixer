@@ -21,8 +21,13 @@ like dgVoodoo2 or Special K.
 ## Use
 
 1. Run `HOGFixer.exe`.
-2. Click **Import bundled games** (it will ask for the bundle folder if it can't
-   find `My Games` automatically), or **Add game…** to pick any game's `.exe`.
+2. Add games any of three ways:
+   - **Import bundled games** (asks for the bundle folder if it can't find
+     `My Games` automatically),
+   - **Browse…** to pick a game's `.exe`, or
+   - **paste a path** into the address box and press Enter — a `.exe` is added as
+     a game, a folder is imported as a bundle. (Tip: in Explorer, Shift+right-click
+     a file → "Copy as path", then paste here.)
 3. Select a game on the left. The defaults are tuned for a weak GPU at 1440p/4K:
    - **Window mode: borderless** — full-screen window, internal upscale.
    - **Internal resolution: auto (≤1080p)** — lower this (e.g. 720) if the game

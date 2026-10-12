@@ -88,6 +88,7 @@ struct App {
     int selected = -1;
     std::string status;
     std::wstring bundleRoot;
+    char pathInput[1024] = "";
 
     void Refresh() {
         library = LoadLibrary();
@@ -108,9 +109,33 @@ struct App {
         }
     }
 
-    void ImportBundle() {
+    // Accepts a pasted path (as from Explorer's address bar or "Copy as path"): a game .exe is
+    // added directly; a folder is treated as a bundle root and imported.
+    void AddPath(std::string raw) {
+        // Trim whitespace and surrounding quotes that "Copy as path" adds.
+        size_t a = raw.find_first_not_of(" \t\r\n\"");
+        size_t b = raw.find_last_not_of(" \t\r\n\"");
+        if (a == std::string::npos) {
+            status = "Enter a path first";
+            return;
+        }
+        std::wstring path = Widen(raw.substr(a, b - a + 1));
+        DWORD attr = GetFileAttributesW(path.c_str());
+        if (attr == INVALID_FILE_ATTRIBUTES) {
+            status = "Path not found: " + Narrow(path);
+            return;
+        }
+        if (attr & FILE_ATTRIBUTE_DIRECTORY) {
+            bundleRoot = path;
+            ImportBundle(/*alreadyHavePath=*/true);
+        } else {
+            AddExe(path);
+        }
+    }
+
+    void ImportBundle(bool alreadyHavePath = false) {
         auto games = ScanBundle(bundleRoot);
-        if (games.empty()) {
+        if (games.empty() && !alreadyHavePath) {
             // Ask the user to point at the bundle (the folder that contains "My Games").
             std::wstring picked = BrowseForFolder(window, L"Select your hidden-object bundle folder");
             if (!picked.empty()) {
@@ -130,7 +155,10 @@ struct App {
             }
         }
         Refresh();
-        status = "Imported " + std::to_string(added) + " game(s) from the bundle";
+        if (games.empty())
+            status = "No games found under " + Narrow(bundleRoot) + " (need a \"My Games\" folder)";
+        else
+            status = "Imported " + std::to_string(added) + " game(s) from the bundle";
     }
 
     void Launch(Entry& e) {
@@ -230,6 +258,18 @@ int main(int, char**) {
     app.window = SDL_CreateWindow("HOG Fixer", 1000, 680, flags);
     app.renderer = SDL_CreateRenderer(app.window, nullptr);
     SDL_SetRenderVSync(app.renderer, 1);
+
+    // Use the embedded hog icon for the window (taskbar + title bar).
+    if (HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(
+            SDL_GetWindowProperties(app.window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr))) {
+        HINSTANCE inst = GetModuleHandleW(nullptr);
+        if (HICON big = static_cast<HICON>(
+                LoadImageW(inst, MAKEINTRESOURCEW(101), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE)))
+            SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(big));
+        if (HICON sm = static_cast<HICON>(
+                LoadImageW(inst, MAKEINTRESOURCEW(101), IMAGE_ICON, 16, 16, 0)))
+            SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(sm));
+    }
     if (!app.window || !app.renderer) {
         MessageBoxA(nullptr, SDL_GetError(), "HOG Fixer: window creation failed", MB_ICONERROR);
         return 1;
@@ -263,11 +303,22 @@ int main(int, char**) {
                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                          ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-        if (ImGui::Button("Add game…")) app.AddExe(BrowseForExe(app.window));
+        if (ImGui::Button("Browse…")) app.AddExe(BrowseForExe(app.window));
         ImGui::SameLine();
         if (ImGui::Button("Import bundled games")) app.ImportBundle();
         ImGui::SameLine();
         if (ImGui::Button("Refresh")) app.Refresh();
+
+        // Address-bar style: paste a path to a game .exe or a bundle folder and press Enter.
+        ImGui::SetNextItemWidth(-90.0f);
+        bool submitted = ImGui::InputTextWithHint(
+            "##path", "Paste a path to a game .exe (or a bundle folder) and press Enter", app.pathInput,
+            sizeof(app.pathInput), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        if (ImGui::Button("Add", ImVec2(70, 0)) || submitted) {
+            app.AddPath(app.pathInput);
+            app.pathInput[0] = '\0';
+        }
 
         ImGui::Separator();
         ImGui::BeginChild("list", ImVec2(300, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
