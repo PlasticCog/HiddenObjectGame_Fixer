@@ -3,7 +3,12 @@
 #include <d3d9.h>
 #include <intrin.h>
 
+#include <algorithm>
 #include <cmath>
+#include <vector>
+
+using std::max;
+using std::min;
 
 #include "cursor.h"
 #include "display.h"
@@ -90,24 +95,60 @@ void FixupPresentParams(D3DPRESENT_PARAMETERS* pp, const char* where) {
          g_profile.vsync ? "vsync" : "immediate");
 }
 
-// Copies the currently bound stage-0 texture (assumed to be the cursor sprite) to the OS cursor.
-void TryCaptureCursorTexture() {
-    if (!g_stage0) return;
+// Builds the OS cursor from the cursor quad the engine just drew: reads the quad's screen size and
+// its texture sub-rect (UVs) from the vertex data, then copies that sub-rect out of the bound
+// stage-0 texture. Reading the UVs is what lets this work when the cursor lives in a texture atlas.
+// Only handles an uncompressed 32-bit texture; for anything else the shim falls back to an arrow.
+void CaptureCursorFromQuad(const void* verts, UINT vertexCount, UINT stride) {
+    if (!g_stage0 || !verts || vertexCount < 3 || stride < 24) return;
     IDirect3DTexture9* tex = nullptr;
     if (FAILED(g_stage0->QueryInterface(IID_IDirect3DTexture9, reinterpret_cast<void**>(&tex))) || !tex) return;
+
+    bool done = false;
     D3DSURFACE_DESC desc{};
-    if (SUCCEEDED(tex->GetLevelDesc(0, &desc)) && desc.Width <= 256 && desc.Height <= 256 &&
-        desc.Format == D3DFMT_A8R8G8B8) {
-        D3DLOCKED_RECT lr{};
-        if (SUCCEEDED(tex->LockRect(0, &lr, nullptr, D3DLOCK_READONLY))) {
-            // The sprite texture is usually a tight power-of-two holding one cursor; use it whole.
-            // (Precise sub-rect/hotspot comes from the engine shim when it knows them.)
-            cursor::SubmitSprite(lr.pBits, int(desc.Width), int(desc.Height), 0, 0,
-                                 reinterpret_cast<uintptr_t>(g_stage0));
-            tex->UnlockRect(0);
+    if (SUCCEEDED(tex->GetLevelDesc(0, &desc)) &&
+        (desc.Format == D3DFMT_A8R8G8B8 || desc.Format == D3DFMT_X8R8G8B8)) {
+        // Vertices are XYZRHW first (screen x,y at offset 0/4); the 2D texcoord is the last 8 bytes.
+        const auto* base = static_cast<const unsigned char*>(verts);
+        float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
+        float minU = 1e9f, minV = 1e9f, maxU = -1e9f, maxV = -1e9f;
+        for (UINT i = 0; i < vertexCount; ++i) {
+            const unsigned char* v = base + size_t(i) * stride;
+            float x = *reinterpret_cast<const float*>(v + 0);
+            float y = *reinterpret_cast<const float*>(v + 4);
+            float u = *reinterpret_cast<const float*>(v + stride - 8);
+            float vv = *reinterpret_cast<const float*>(v + stride - 4);
+            minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y);
+            minU = min(minU, u); maxU = max(maxU, u); minV = min(minV, vv); maxV = max(maxV, vv);
+        }
+        int w = int(maxX - minX + 0.5f), h = int(maxY - minY + 0.5f);
+        RECT sub{int(minU * desc.Width + 0.5f), int(minV * desc.Height + 0.5f),
+                 int(maxU * desc.Width + 0.5f), int(maxV * desc.Height + 0.5f)};
+        int sw = sub.right - sub.left, sh = sub.bottom - sub.top;
+        if (w > 0 && h > 0 && w <= 256 && h <= 256 && sw > 0 && sh > 0 && sw <= 256 && sh <= 256 &&
+            sub.left >= 0 && sub.top >= 0 && sub.right <= int(desc.Width) && sub.bottom <= int(desc.Height)) {
+            D3DLOCKED_RECT lr{};
+            if (SUCCEEDED(tex->LockRect(0, &lr, &sub, D3DLOCK_READONLY))) {
+                // Copy the sub-rect into a tight BGRA buffer (force opaque alpha for X8R8G8B8).
+                std::vector<unsigned char> buf(size_t(sw) * sh * 4);
+                for (int row = 0; row < sh; ++row) {
+                    const unsigned char* src = static_cast<const unsigned char*>(lr.pBits) + size_t(row) * lr.Pitch;
+                    unsigned char* dst = buf.data() + size_t(row) * sw * 4;
+                    memcpy(dst, src, size_t(sw) * 4);
+                    if (desc.Format == D3DFMT_X8R8G8B8)
+                        for (int c = 0; c < sw; ++c) dst[c * 4 + 3] = 0xFF;
+                }
+                tex->UnlockRect(0);
+                // Hotspot at the quad centre (these engines centre the cursor on the mouse point).
+                cursor::SubmitSprite(buf.data(), sw, sh, sw / 2, sh / 2,
+                                     (reinterpret_cast<uintptr_t>(g_stage0) << 8) ^ (sub.left * 73856093u) ^
+                                         (sub.top * 19349663u));
+                done = true;
+            }
         }
     }
     tex->Release();
+    if (!done) cursor::NoteCaptureUnavailable();  // let the shim fall back to a system arrow
 }
 
 // --- device method detours -------------------------------------------------------------------
@@ -116,25 +157,33 @@ HRESULT STDMETHODCALLTYPE H_SetTexture(IDirect3DDevice9* dev, DWORD stage, IDire
     return real_SetTexture(dev, stage, tex);
 }
 
-bool SuppressDrawForCapture() {
-    if (!g_captureActive || g_capturedThisPass) return false;
-    TryCaptureCursorTexture();
-    g_capturedThisPass = true;
-    return cursor::UsingConvertedCursor();  // only hide the sprite once we actually have a cursor
+UINT VertexCount(D3DPRIMITIVETYPE type, UINT prims) {
+    switch (type) {
+        case D3DPT_TRIANGLELIST: return prims * 3;
+        case D3DPT_TRIANGLESTRIP:
+        case D3DPT_TRIANGLEFAN: return prims + 2;
+        default: return prims * 3;
+    }
 }
 
 HRESULT STDMETHODCALLTYPE H_DrawPrimitiveUP(IDirect3DDevice9* dev, D3DPRIMITIVETYPE type, UINT prims,
                                             const void* data, UINT stride) {
-    if (SuppressDrawForCapture()) return D3D_OK;
+    if (g_captureActive) {
+        if (!g_capturedThisPass) {
+            CaptureCursorFromQuad(data, VertexCount(type, prims), stride);
+            g_capturedThisPass = true;
+        }
+        return D3D_OK;  // hide the software cursor; it is served as a hardware OS cursor instead
+    }
     return real_DrawPrimitiveUP(dev, type, prims, data, stride);
 }
 HRESULT STDMETHODCALLTYPE H_DrawPrimitive(IDirect3DDevice9* dev, D3DPRIMITIVETYPE type, UINT start, UINT prims) {
-    if (SuppressDrawForCapture()) return D3D_OK;
+    if (g_captureActive) return D3D_OK;
     return real_DrawPrimitive(dev, type, start, prims);
 }
 HRESULT STDMETHODCALLTYPE H_DrawIndexedPrimitive(IDirect3DDevice9* dev, D3DPRIMITIVETYPE type, INT base,
                                                  UINT minIndex, UINT numV, UINT start, UINT prims) {
-    if (SuppressDrawForCapture()) return D3D_OK;
+    if (g_captureActive) return D3D_OK;
     return real_DrawIndexedPrimitive(dev, type, base, minIndex, numV, start, prims);
 }
 

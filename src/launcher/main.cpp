@@ -411,7 +411,7 @@ int main(int, char**) {
         ImGui::BeginChild("detail", ImVec2(0, 0));
         if (app.selected >= 0 && app.selected < int(app.library.size())) {
             Entry& e = app.library[app.selected];
-            if (ImGui::Button("Play", ImVec2(120, 36))) app.Launch(e);
+            if (ImGui::Button("Play", ImVec2(140 * app.uiScale, 0))) app.Launch(e);
             ImGui::SameLine();
             if (ImGui::Button("Save")) {
                 SaveEntry(e);
@@ -430,7 +430,7 @@ int main(int, char**) {
         ImGui::EndChild();
 
         if (!app.status.empty()) {
-            ImGui::SetCursorPosY(vp->WorkSize.y - 28);
+            ImGui::SetCursorPosY(vp->WorkSize.y - ImGui::GetTextLineHeightWithSpacing() - 6);
             ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1), "%s", app.status.c_str());
         }
         ImGui::End();

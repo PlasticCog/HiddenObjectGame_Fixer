@@ -103,6 +103,13 @@ const wchar_t* g_forcedType = IDC_ARROW;
 
 void ReloadForced() { g_forced = real::LoadCursorW ? real::LoadCursorW(nullptr, g_forcedType) : nullptr; }
 
+// The cursor we show while forcing: the captured themed cursor if we have one, else the arrow.
+HCURSOR ForcedCursor() {
+    if (g_converted) return g_converted;
+    if (!g_forced) ReloadForced();
+    return g_forced;
+}
+
 // --- hooks -----------------------------------------------------------------------------------
 
 // Camp 1: the game warps the cursor to clamp it. We swallow those warps (letting the hardware
@@ -123,12 +130,10 @@ BOOL WINAPI H_SetCursorPos(int x, int y) {
 
 HCURSOR WINAPI H_SetCursor(HCURSOR c) {
     if (Virtualizing() && CalledFromGame(_ReturnAddress())) {
-        // Engine shim is suppressing the software sprite: always show our hardware cursor, even
-        // when the game passes NULL to hide the OS cursor.
-        if (g_forceSystem) {
-            if (!g_forced) ReloadForced();
-            return real::SetCursor(g_forced);
-        }
+        // Engine shim is suppressing the software sprite: always show our hardware cursor (the
+        // captured themed cursor, or an arrow until/unless we have one), even when the game passes
+        // NULL to hide the OS cursor.
+        if (g_forceSystem) return real::SetCursor(ForcedCursor());
         if (ConvertedEnabled() && g_wantConverted && g_converted)
             return real::SetCursor(g_gameCursorVisible ? g_converted : nullptr);
     }
@@ -136,10 +141,10 @@ HCURSOR WINAPI H_SetCursor(HCURSOR c) {
 }
 
 int WINAPI H_ShowCursor(BOOL show) {
-    if (Virtualizing() && ConvertedEnabled() && g_wantConverted && CalledFromGame(_ReturnAddress())) {
-        // When we serve the converted cursor, keep the OS cursor shown regardless.
+    if (Virtualizing() && (g_forceSystem || (ConvertedEnabled() && g_wantConverted)) &&
+        CalledFromGame(_ReturnAddress())) {
+        // Keep our hardware cursor visible regardless of the game's hide requests.
         g_gameCursorVisible = show != FALSE;
-        if (g_gameCursorVisible && g_converted) real::SetCursor(g_converted);
         return show ? 0 : -1;
     }
     return real::ShowCursor(show);
@@ -198,13 +203,21 @@ void SetForcedCursorType(const wchar_t* idc) {
     }
 }
 
+void NoteCaptureUnavailable() {
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        LOGI("cursor: themed cursor texture not capturable (compressed/atlas); using a system arrow");
+    }
+}
+
 bool UsingConvertedCursor() { return g_wantConverted && g_converted != nullptr; }
 
 void OnPresent() {
     if (g_forceSystem) {
-        // Re-assert our cursor if focus is ours, in case the game set something between frames.
+        ConsumePending();  // promote any newly captured sprite into the themed HCURSOR
         HWND hwnd = window::GameWindow();
-        if (g_forced && hwnd && GetForegroundWindow() == hwnd) real::SetCursor(g_forced);
+        if (hwnd && GetForegroundWindow() == hwnd) real::SetCursor(ForcedCursor());
         return;
     }
     if (!ConvertedEnabled() || !g_wantConverted) return;

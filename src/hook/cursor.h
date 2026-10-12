@@ -22,6 +22,10 @@ void InstallHooks();
 // hotspot is in texture pixels. Thread-safe; the actual SetCursor happens on the window thread.
 void SubmitSprite(const void* bgra, int w, int h, int hotspotX, int hotspotY, unsigned long long key);
 
+// Called by the D3D layer when the cursor texture can't be captured (e.g. compressed): the forced
+// cursor then stays a system arrow instead of a themed one.
+void NoteCaptureUnavailable();
+
 // The game asked to show/hide its software cursor; mirror that to the OS cursor.
 void SetGameCursorVisible(bool visible);
 

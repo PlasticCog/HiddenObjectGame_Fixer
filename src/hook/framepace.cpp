@@ -59,10 +59,12 @@ void BeforePresent() {
 void AfterPresent(IDirect3DDevice9* dev) {
     if (!g_profile.lowLatency || !dev) return;
     if (!g_flushQuery) return;
-    // Force the CPU to wait until the GPU has finished this frame, so no more than one frame is
-    // ever queued ahead. On a slow iGPU this is what keeps the cursor and clicks feeling attached.
+    // Wait until the GPU has finished this frame, so no more than one frame is ever queued ahead;
+    // keeps the cursor and clicks feeling attached. We YIELD the core rather than busy-spin: on an
+    // APU (e.g. Ryzen with integrated Radeon) the CPU and GPU share a power/thermal budget, so a
+    // spinning core would steal clocks from the iGPU and cut frame rate.
     if (SUCCEEDED(g_flushQuery->Issue(D3DISSUE_END))) {
-        while (g_flushQuery->GetData(nullptr, 0, D3DGETDATA_FLUSH) == S_FALSE) YieldProcessor();
+        while (g_flushQuery->GetData(nullptr, 0, D3DGETDATA_FLUSH) == S_FALSE) SwitchToThread();
     }
 }
 
