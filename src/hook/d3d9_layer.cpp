@@ -95,6 +95,65 @@ void FixupPresentParams(D3DPRESENT_PARAMETERS* pp, const char* where) {
          g_profile.vsync ? "vsync" : "immediate");
 }
 
+// Source bytes-per-pixel for the formats we can decode (0 = unsupported, e.g. DXT/compressed).
+int FormatBytesPerPixel(D3DFORMAT fmt) {
+    switch (fmt) {
+        case D3DFMT_A8R8G8B8:
+        case D3DFMT_X8R8G8B8:
+            return 4;
+        case D3DFMT_A4R4G4B4:
+        case D3DFMT_X4R4G4B4:
+        case D3DFMT_A1R5G5B5:
+        case D3DFMT_X1R5G5B5:
+        case D3DFMT_R5G6B5:
+            return 2;
+        default:
+            return 0;
+    }
+}
+
+// Decodes one row of `count` source pixels into BGRA8888 (top-down, premultiplied-agnostic).
+void DecodeRow(const unsigned char* src, unsigned char* dst, int count, D3DFORMAT fmt) {
+    auto x4 = [](unsigned v) { return static_cast<unsigned char>(v * 17); };           // 4-bit -> 8-bit
+    auto x5 = [](unsigned v) { return static_cast<unsigned char>((v << 3) | (v >> 2)); };
+    auto x6 = [](unsigned v) { return static_cast<unsigned char>((v << 2) | (v >> 4)); };
+    if (fmt == D3DFMT_A8R8G8B8 || fmt == D3DFMT_X8R8G8B8) {
+        memcpy(dst, src, size_t(count) * 4);  // already B,G,R,A in memory
+        if (fmt == D3DFMT_X8R8G8B8)
+            for (int i = 0; i < count; ++i) dst[i * 4 + 3] = 0xFF;
+        return;
+    }
+    const auto* s = reinterpret_cast<const unsigned short*>(src);
+    for (int i = 0; i < count; ++i) {
+        unsigned p = s[i];
+        unsigned char b, g, r, a;
+        switch (fmt) {
+            case D3DFMT_A4R4G4B4:
+                a = x4((p >> 12) & 0xF); r = x4((p >> 8) & 0xF); g = x4((p >> 4) & 0xF); b = x4(p & 0xF);
+                break;
+            case D3DFMT_X4R4G4B4:
+                a = 0xFF; r = x4((p >> 8) & 0xF); g = x4((p >> 4) & 0xF); b = x4(p & 0xF);
+                break;
+            case D3DFMT_A1R5G5B5:
+                a = (p & 0x8000) ? 0xFF : 0x00; r = x5((p >> 10) & 0x1F); g = x5((p >> 5) & 0x1F); b = x5(p & 0x1F);
+                break;
+            case D3DFMT_X1R5G5B5:
+                a = 0xFF; r = x5((p >> 10) & 0x1F); g = x5((p >> 5) & 0x1F); b = x5(p & 0x1F);
+                break;
+            case D3DFMT_R5G6B5:
+                a = 0xFF; r = x5((p >> 11) & 0x1F); g = x6((p >> 5) & 0x3F); b = x5(p & 0x1F);
+                break;
+            default:
+                a = r = g = b = 0;
+                break;
+        }
+        dst[i * 4 + 0] = b;
+        dst[i * 4 + 1] = g;
+        dst[i * 4 + 2] = r;
+        dst[i * 4 + 3] = a;
+    }
+}
+
 // Builds the OS cursor from the cursor quad the engine just drew: reads the quad's screen size and
 // its texture sub-rect (UVs) from the vertex data, then copies that sub-rect out of the bound
 // stage-0 texture. Reading the UVs is what lets this work when the cursor lives in a texture atlas.
@@ -106,8 +165,15 @@ void CaptureCursorFromQuad(const void* verts, UINT vertexCount, UINT stride) {
 
     bool done = false;
     D3DSURFACE_DESC desc{};
-    if (SUCCEEDED(tex->GetLevelDesc(0, &desc)) &&
-        (desc.Format == D3DFMT_A8R8G8B8 || desc.Format == D3DFMT_X8R8G8B8)) {
+    int bpp = FormatBytesPerPixel(SUCCEEDED(tex->GetLevelDesc(0, &desc)) ? desc.Format : D3DFMT_UNKNOWN);
+    if (bpp == 0) {
+        static D3DFORMAT lastLogged = D3DFMT_UNKNOWN;
+        if (desc.Format != lastLogged) {
+            lastLogged = desc.Format;
+            LOGI("d3d9: cursor texture format 0x%X (%ux%u) unsupported for capture", desc.Format, desc.Width,
+                 desc.Height);
+        }
+    } else {
         // Vertices are XYZRHW first (screen x,y at offset 0/4); the 2D texcoord is the last 8 bytes.
         const auto* base = static_cast<const unsigned char*>(verts);
         float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
@@ -129,14 +195,11 @@ void CaptureCursorFromQuad(const void* verts, UINT vertexCount, UINT stride) {
             sub.left >= 0 && sub.top >= 0 && sub.right <= int(desc.Width) && sub.bottom <= int(desc.Height)) {
             D3DLOCKED_RECT lr{};
             if (SUCCEEDED(tex->LockRect(0, &lr, &sub, D3DLOCK_READONLY))) {
-                // Copy the sub-rect into a tight BGRA buffer (force opaque alpha for X8R8G8B8).
                 std::vector<unsigned char> buf(size_t(sw) * sh * 4);
                 for (int row = 0; row < sh; ++row) {
                     const unsigned char* src = static_cast<const unsigned char*>(lr.pBits) + size_t(row) * lr.Pitch;
                     unsigned char* dst = buf.data() + size_t(row) * sw * 4;
-                    memcpy(dst, src, size_t(sw) * 4);
-                    if (desc.Format == D3DFMT_X8R8G8B8)
-                        for (int c = 0; c < sw; ++c) dst[c * 4 + 3] = 0xFF;
+                    DecodeRow(src, dst, sw, desc.Format);
                 }
                 tex->UnlockRect(0);
                 // Hotspot at the quad centre (these engines centre the cursor on the mouse point).

@@ -1,6 +1,6 @@
 # Assembles a release zip from a completed Release build.
 # Usage: powershell -ExecutionPolicy Bypass -File package.ps1 [-Version v0.1.0]
-param([string]$Version = "v0.1.3")
+param([string]$Version = "v0.1.4")
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $bin = Join-Path $root "build\Release\bin"
