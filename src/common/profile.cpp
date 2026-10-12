@@ -92,6 +92,14 @@ const wchar_t* ToString(DpiMode v) {
     }
     return L"";
 }
+const wchar_t* ToString(GpuPreference v) {
+    switch (v) {
+        case GpuPreference::Default: return L"default";
+        case GpuPreference::PowerSaving: return L"integrated";
+        case GpuPreference::HighPerformance: return L"discrete";
+    }
+    return L"";
+}
 
 bool Profile::Load(const std::wstring& path) {
     if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
@@ -122,6 +130,8 @@ bool Profile::Load(const std::wstring& path) {
     confineCursor = ini.GetBool(L"Cursor", L"Confine", confineCursor);
 
     dpi = ParseEnum(ini.Get(L"Compat", L"Dpi"), {DpiMode::PerMonitor, DpiMode::System, DpiMode::Unaware}, dpi);
+    gpu = ParseEnum(ini.Get(L"Compat", L"Gpu"),
+                    {GpuPreference::Default, GpuPreference::PowerSaving, GpuPreference::HighPerformance}, gpu);
     followChildren = ini.GetBool(L"Compat", L"FollowChildren", followChildren);
     forceHardwareVP = ini.GetBool(L"Compat", L"ForceHardwareVP", forceHardwareVP);
     flashOcx = ini.Get(L"Compat", L"FlashOcx");
@@ -163,6 +173,7 @@ bool Profile::Save(const std::wstring& path) const {
     ok &= ini.Put(L"Cursor", L"Confine", confineCursor ? L"1" : L"0");
 
     ok &= ini.Put(L"Compat", L"Dpi", ToString(dpi));
+    ok &= ini.Put(L"Compat", L"Gpu", ToString(gpu));
     ok &= ini.Put(L"Compat", L"FollowChildren", followChildren ? L"1" : L"0");
     ok &= ini.Put(L"Compat", L"ForceHardwareVP", forceHardwareVP ? L"1" : L"0");
     ok &= ini.Put(L"Compat", L"FlashOcx", flashOcx);

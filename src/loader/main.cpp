@@ -65,6 +65,7 @@ int wmain(int argc, wchar_t** argv) {
     std::wstring logPath = Arg(argc, argv, L"--log");
     if (logPath.empty()) logPath = DirOf(prof.exe) + L"\\hogfix.log";
 
+    ApplyGpuPreference(prof.exe, prof.gpu);
     LaunchResult r = LaunchWithHook(prof.exe, prof.args, prof.workDir, dll, profilePath, logPath);
     if (!r.ok) return Fail(r.error);
     wprintf(L"hogrun: launched pid %lu\n", r.pid);

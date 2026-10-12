@@ -10,6 +10,8 @@ enum class ScaleFilter { Bilinear, Bicubic, Sharp, Nearest };
 enum class AspectMode { Keep, Stretch, Integer };
 enum class CursorMode { System, Game };   // System = smooth OS cursor (converted from the game's)
 enum class DpiMode { PerMonitor, System, Unaware };
+// Which GPU Windows should hand the game, via the per-app graphics preference.
+enum class GpuPreference { Default, PowerSaving, HighPerformance };
 
 struct Profile {
     // [Game]
@@ -37,6 +39,7 @@ struct Profile {
 
     // [Compat]
     DpiMode dpi = DpiMode::PerMonitor;
+    GpuPreference gpu = GpuPreference::Default;
     bool followChildren = true;
     bool forceHardwareVP = false;
     std::wstring flashOcx;     // path to a Flash ActiveX OCX for Flash-hosting games
@@ -51,6 +54,7 @@ const wchar_t* ToString(ScaleFilter v);
 const wchar_t* ToString(AspectMode v);
 const wchar_t* ToString(CursorMode v);
 const wchar_t* ToString(DpiMode v);
+const wchar_t* ToString(GpuPreference v);
 
 // Environment variable through which the loader hands the profile path to hogfix.dll.
 inline constexpr wchar_t kProfileEnvVar[] = L"HOGFIX_PROFILE";

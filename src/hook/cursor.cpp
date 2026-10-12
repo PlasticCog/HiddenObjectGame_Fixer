@@ -96,6 +96,13 @@ void ConsumePending() {
 
 bool ConvertedEnabled() { return g_profile.cursor == CursorMode::System; }
 
+// --- forced system cursor (used with engine sprite-suppression) ------------------------------
+bool g_forceSystem = false;
+HCURSOR g_forced = nullptr;
+const wchar_t* g_forcedType = IDC_ARROW;
+
+void ReloadForced() { g_forced = real::LoadCursorW ? real::LoadCursorW(nullptr, g_forcedType) : nullptr; }
+
 // --- hooks -----------------------------------------------------------------------------------
 
 // Camp 1: the game warps the cursor to clamp it. We swallow those warps (letting the hardware
@@ -115,10 +122,15 @@ BOOL WINAPI H_SetCursorPos(int x, int y) {
 // coordinate is handled per-engine in the engine shims, not here.)
 
 HCURSOR WINAPI H_SetCursor(HCURSOR c) {
-    if (Virtualizing() && ConvertedEnabled() && CalledFromGame(_ReturnAddress())) {
-        if (g_wantConverted && g_converted) {
-            return real::SetCursor(g_gameCursorVisible ? g_converted : nullptr);
+    if (Virtualizing() && CalledFromGame(_ReturnAddress())) {
+        // Engine shim is suppressing the software sprite: always show our hardware cursor, even
+        // when the game passes NULL to hide the OS cursor.
+        if (g_forceSystem) {
+            if (!g_forced) ReloadForced();
+            return real::SetCursor(g_forced);
         }
+        if (ConvertedEnabled() && g_wantConverted && g_converted)
+            return real::SetCursor(g_gameCursorVisible ? g_converted : nullptr);
     }
     return real::SetCursor(c);
 }
@@ -170,9 +182,31 @@ void SubmitSprite(const void* bgra, int w, int h, int hotspotX, int hotspotY, un
 
 void SetGameCursorVisible(bool visible) { g_gameCursorVisible = visible; }
 
+void ForceSystemCursor(bool enable) {
+    g_forceSystem = enable;
+    if (enable) {
+        ReloadForced();
+        if (g_forced) real::SetCursor(g_forced);
+        LOGI("cursor: forcing smooth system cursor (software sprite suppressed by shim)");
+    }
+}
+
+void SetForcedCursorType(const wchar_t* idc) {
+    if (idc && idc != g_forcedType) {
+        g_forcedType = idc;
+        ReloadForced();
+    }
+}
+
 bool UsingConvertedCursor() { return g_wantConverted && g_converted != nullptr; }
 
 void OnPresent() {
+    if (g_forceSystem) {
+        // Re-assert our cursor if focus is ours, in case the game set something between frames.
+        HWND hwnd = window::GameWindow();
+        if (g_forced && hwnd && GetForegroundWindow() == hwnd) real::SetCursor(g_forced);
+        return;
+    }
     if (!ConvertedEnabled() || !g_wantConverted) return;
     ConsumePending();
     // Re-assert our cursor each frame in case the game set a different one.

@@ -4,7 +4,13 @@
 
 #include <string>
 
+#include "profile.h"
+
 namespace hog {
+
+// Sets (or clears) Windows' per-app graphics preference for `exe`, so the next launch runs on the
+// chosen GPU. Writes HKCU\Software\Microsoft\DirectX\UserGpuPreferences. Default clears it.
+void ApplyGpuPreference(const std::wstring& exe, GpuPreference pref);
 
 struct LaunchResult {
     bool ok = false;

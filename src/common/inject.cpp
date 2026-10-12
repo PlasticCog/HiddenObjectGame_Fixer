@@ -77,6 +77,22 @@ std::vector<wchar_t> MakeEnvironment(const std::vector<std::pair<std::wstring, s
 
 }  // namespace
 
+void ApplyGpuPreference(const std::wstring& exe, GpuPreference pref) {
+    HKEY key;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\DirectX\\UserGpuPreferences", 0, nullptr, 0,
+                        KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
+        return;
+    if (pref == GpuPreference::Default) {
+        RegDeleteValueW(key, exe.c_str());
+    } else {
+        // GpuPreference=1 -> power saving (integrated), 2 -> high performance (discrete).
+        std::wstring data = (pref == GpuPreference::PowerSaving) ? L"GpuPreference=1;" : L"GpuPreference=2;";
+        RegSetValueExW(key, exe.c_str(), 0, REG_SZ, reinterpret_cast<const BYTE*>(data.c_str()),
+                       static_cast<DWORD>((data.size() + 1) * sizeof(wchar_t)));
+    }
+    RegCloseKey(key);
+}
+
 std::wstring LastErrorText(DWORD err) {
     wchar_t* msg = nullptr;
     FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,

@@ -43,6 +43,10 @@ next to the game as `hogfix.log` (turn on **Verbose log** if you need detail).
 
 - **Still slow?** Lower *Internal resolution* to 720 or 768.
 - **Wrong monitor?** Set *Monitor* (0 = primary, 1 = first, 2 = second…).
+- **Laptop with two GPUs?** Set *GPU* (Compatibility section) to **high performance** to force
+  the discrete GPU, or **power saving** for the integrated one. Hover it to see your GPUs.
+- **Choppy cursor?** Set *Cursor* to **system** — for the Kronville/Panopticon/Mexicana/Cruel Games
+  engine this replaces the game's frame-rate-bound software cursor with a smooth hardware one.
 - **Black bars / stretched?** *Aspect* = keep (bars, correct shape), stretch
   (fills, may distort), or integer (pixel-perfect).
 - **A game misbehaves with the fix?** Set *Window mode* to **passthrough** to run

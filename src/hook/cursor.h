@@ -25,6 +25,13 @@ void SubmitSprite(const void* bgra, int w, int h, int hotspotX, int hotspotY, un
 // The game asked to show/hide its software cursor; mirror that to the OS cursor.
 void SetGameCursorVisible(bool visible);
 
+// Force a smooth OS cursor: the engine's own SetCursor calls (including its SetCursor(NULL) used to
+// hide the OS cursor while it draws a software sprite) are replaced with a real system cursor. Used
+// by engine shims that also suppress the software sprite, so the visible pointer is pure hardware.
+// `osIdcName` is an IDC_* value (e.g. IDC_ARROW); 0 keeps the current forced cursor.
+void ForceSystemCursor(bool enable);
+void SetForcedCursorType(const wchar_t* idc);  // IDC_ARROW/IDC_HAND/IDC_IBEAM/IDC_WAIT
+
 // True while we are serving a system cursor converted from the game's sprite (camp 2).
 bool UsingConvertedCursor();
 
